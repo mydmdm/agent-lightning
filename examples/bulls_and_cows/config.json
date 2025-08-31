@@ -1,0 +1,8 @@
+{
+    "game_server_url": "http://localhost:8000",
+    "openai_base_url": "http://localhost:8001/v1",
+    "logger_filename": "build/game_logs.jsonl",
+    "engine": "vllm",
+    "model": "Qwen/Qwen3-4B-Instruct-2507",
+    "gen_parameters": {}
+}

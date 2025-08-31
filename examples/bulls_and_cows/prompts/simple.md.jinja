@@ -1,0 +1,33 @@
+## Bulls and Cows — Next Move
+
+You are playing **Bulls and Cows**, a code-breaking game.
+
+**Rules (brief):**
+- The secret is a 4-digit sequence; each digit is an integer from **1 to 9**.
+- **Bull**: a correct digit in the **correct position**.
+- **Cow**: a correct digit in the **wrong position**.
+- After each guess you receive feedback: number of bulls and cows.
+- Do **not** repeat an exact previous guess. Your new guess must be 4 digits, separated by **single spaces**.
+- In the first round and there are no previous tries, you can make any valid guess.
+
+### History
+{% if tries and tries|length > 0 -%}
+Below are your previous tries and feedback (most recent may be last):
+
+{%- for t in tries %}
+{{ loop.index }}. {{ t }}
+{%- endfor %}
+{%- else -%}
+_No previous tries._
+{%- endif %}
+
+### Task
+1) Reason about which digits/positions remain possible given the history.
+2) Propose exactly **one** new guess that is consistent with all feedback.
+3) Output **only** the two XML-like blocks below, in this order:
+   - `<think>...</think>` with your brief internal reasoning.
+   - `<guess>d1 d2 d3 d4</guess>` with four digits (1–9) separated by single spaces, e.g. `<guess>1 2 3 4</guess>`.
+
+**Output format (strict, no extra text before or after):**
+<think>your brief reasoning here</think>
+<guess>d1 d2 d3 d4</guess>
