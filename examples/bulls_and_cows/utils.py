@@ -1,8 +1,8 @@
 
 import os
 import json
-import requests
 import subprocess
+import threading
 import httpx
 import asyncio
 
@@ -43,14 +43,38 @@ def load_jsonl(filepath: str) -> list[dict[str, Any]]:
 class DaemonServer(AbstractContextManager):
     """Base class for starting and managing a daemon subprocess."""
 
-    def __init__(self, cmd: list[str], name: str):
+    def __init__(self, cmd: list[str], name: str, ready_text: str = None, timeout: float = 30.0):
         self.cmd = cmd
         self.name = name
+        self.ready_text = ready_text
+        self.timeout = timeout
         self.process: subprocess.Popen | None = None
+        self._ready_event = threading.Event()
 
     def __enter__(self):
-        self.process = subprocess.Popen(self.cmd)
-        print(f"[{self.name}] Started (PID={self.process.pid}), command: \n>>> {' '.join(self.cmd)}")
+        self.process = subprocess.Popen(
+            self.cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        def _watch_stdout():
+            assert self.process and self.process.stdout
+            for line in self.process.stdout:
+                print(f"[{self.name}] {line.strip()}")
+                if self.ready_text and self.ready_text in line:
+                    self._ready_event.set()
+
+        threading.Thread(target=_watch_stdout, daemon=True).start()
+        if self.ready_text:
+            # Wait for the ready signal
+            if not self._ready_event.wait(timeout=self.timeout):
+                self.__exit__(None, None, None)  # cleanup
+                raise TimeoutError(f"[{self.name}] Did not see '{self.ready_text}' in output within {self.timeout}s")
+            print(f"[{self.name}] Ready (PID={self.process.pid}), command: \n>>> {' '.join(self.cmd)}")
+
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -62,50 +86,6 @@ class DaemonServer(AbstractContextManager):
                 self.process.kill()
             print(f"[{self.name}] Terminated (PID={self.process.pid})")
         return False  # don't suppress exceptions
-
-
-# def completion(model: str, input: List[Dict[str, Any]] | str, chat: bool = True, **kwargs) -> str:
-#     """Call an OpenAI-compatible Chat Completions API, with the following environment variables:
-#     - OPENAI_API_BASE: The base URL for the API (e.g. "https://api.openai.com/v1" or "http://localhost:8000/v1")
-#     - OPENAI_API_KEY: The API key for authentication
-
-#     Args:
-#         model (str): model name that can be accepted by the API
-#         input (List[Dict[str, Any]] | str): the input that to be used as input of models, format determined by chat
-#             - when chat is True, input should be a list of chat messages, each a dict with {"role": str, "content": str}
-#             - when chat is False, input should be a string
-#         chat (bool): whether use the chat/completions interface.
-
-#     Returns:
-#         The assistant's reply as a string.
-#     """
-#     payload = {
-#         "model": model,
-#         "stream": False,
-#     }
-#     endpoint = f"{os.environ['OPENAI_API_BASE']}".rstrip("/")
-#     if chat:
-#         if not endpoint.endswith("chat/completions"):
-#             endpoint = f"{endpoint}/chat/completions"
-#         payload["messages"] = input
-#     else:
-#         if not endpoint.endswith("/completions"):
-#             endpoint = f"{endpoint}/completions"
-#         payload["prompt"] = input
-
-#     headers = {
-#         "Content-Type": "application/json",
-#     }
-#     if "OPENAI_API_KEY" in os.environ and os.environ["OPENAI_API_KEY"]: # key is not empty
-#         headers["Authorization"] = f"Bearer {os.environ['OPENAI_API_KEY']}"
-
-#     payload.update(**kwargs)
-
-#     response = requests.post(endpoint, headers=headers, json=payload)
-#     response.raise_for_status()  # raises if error
-
-#     data = response.json()
-#     return data["choices"][0]["message"]["content"] if chat else data["choices"][0]["text"]
 
 
 def extract_text_between_tags(s: str, tag: str) -> str:

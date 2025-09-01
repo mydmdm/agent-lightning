@@ -1,22 +1,15 @@
 from fastapi import FastAPI, HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
-from contextlib import asynccontextmanager
 from pydantic import BaseModel
 from typing import Dict, List, Any, Literal
-from dataclasses import dataclass, field
-from pathlib import Path
 from collections import defaultdict, namedtuple
 
-import json
 import uuid
-import uvicorn
 import sys
-import argparse
 import requests
 import logging
 import random
-import sqlite3
 import time
 
 
@@ -80,12 +73,17 @@ class StartGameResponse(BaseModel):
 
 @app.post("/start_new_game", response_model=StartGameResponse)
 def start_new_game(req: StartGameRequest):
-    flag, msg = is_valid(req.secret)
+    if req.secret is None or len(req.secret) == 0:
+        secret = generate_a_secret()
+    else:
+        secret = req.secret
+
+    flag, msg = is_valid(secret)
     if not flag:
         logger.error(f"Failed to start new game: {msg}")
         raise HTTPException(status_code=400, detail=msg)
     game_id = str(uuid.uuid4())
-    log_event(game_id, "start_new_game", {"secret": req.secret})
+    log_event(game_id, "start_new_game", {"secret": secret})
     return StartGameResponse(game_id=game_id)
 
 
@@ -150,11 +148,6 @@ def score(req: ScoreRequest):
     return ScoreResponse(game_id=req.game_id, **score)
 
 
-@app.get("/health")
-def health_check():
-    return {"status": "healthy"}
-
-
 # ---------------- Client SDK ----------------
 class BullsAndCowsClient:
     def __init__(self, base_url: str):
@@ -178,40 +171,22 @@ class BullsAndCowsClient:
         result = resp.json()
         return result
 
-    def health_check(self) -> bool:
-        try:
-            resp = requests.get(f"{self.base_url}/health")
-            resp.raise_for_status()
-            status = resp.json().get("status")
-            return status == "healthy"
-        except requests.RequestException as e:
-            return False
 
-    def wait_until_health(self, timeout: float = 10, step: float = 1) -> bool:
-        # Wait until the server is healthy or the timeout is reached
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            if self.health_check():
-                logger.debug("Client: Server is healthy")
-                return True
-            logger.debug(f"Client: Server is not healthy, waiting {step} seconds...")
-            time.sleep(step)
-        logger.error("Client: Timeout reached, server is not healthy")
-        return False
-
-    @staticmethod
-    def generate_a_secret() -> list[int]:
-        numbers = list(range(1, 10))
-        random.shuffle(numbers)
-        s = numbers[:4]
-        assert is_valid(s)[0]
-        return s
+def generate_a_secret() -> list[int]:
+    numbers = list(range(1, 10))
+    random.shuffle(numbers)
+    s = numbers[:4]
+    assert is_valid(s)[0]
+    return s
 
 
 def interactive_mode(base_url: str):
     # here to run an interactive mode client
     # start the server directly, use the following command:
     # uvicorn game:app --host 0.0.0.0 --port 8000
+
+    # set log level higher to avoid info logs
+    logging.basicConfig(level=logging.WARNING)
 
     # print the description
     print("Welcome to the Bulls and Cows game!")
@@ -221,8 +196,7 @@ def interactive_mode(base_url: str):
     client = BullsAndCowsClient(base_url)
     while True:
         # start a new game with randomly generated secret
-        secret = client.generate_a_secret()
-        game_id = client.start_new_game(secret)
+        game_id = client.start_new_game([])
         while True:
             user_input = input("Enter your guess: ")
             if user_input == "0":
