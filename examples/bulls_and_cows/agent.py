@@ -8,10 +8,17 @@ from dotenv import load_dotenv
 from typing import List, Dict, Any, TextIO
 from jinja2 import Environment, FileSystemLoader
 from dataclasses import dataclass, asdict
+from openai import OpenAI
 
-from game import BullsAndCowsClient, interactive_mode, generate_a_secret
-from utils import completion, extract_text_between_tags, DaemonServer, safe_open
+from game import BullsAndCowsClient, interactive_mode
+from utils import extract_text_between_tags, DaemonServer, safe_open
 from agent_config import AgentRunConfig
+
+
+# error classes
+# --- response not stopped (e.g., exceeding the length limit)
+class ResponseNotStoppedError(Exception):
+    pass
 
 
 @dataclass
@@ -38,9 +45,9 @@ class BullsAndCowAgent:
         # --- game client
         self.game_client = BullsAndCowsClient(config.game_server_url)
         # --- llm api
-        os.environ["OPENAI_API_BASE"] = config.openai_base_url
-        if config.dotenv_file:
-            load_dotenv(config.dotenv_file)
+        self.llm_client = OpenAI(
+            base_url=config.openai_base_url,
+        )
         # --- agent function
         self.template_env = Environment(loader=FileSystemLoader('prompts'))
         self.prompt_for_new_guess = self.template_env.get_template(config.prompt_for_new_guess)
@@ -51,14 +58,29 @@ class BullsAndCowAgent:
                 pass
             self.loggers.append(open(config.logger_filename, "a", encoding="utf-8"))
 
+    def close(self):
+        for logger in self.loggers:
+            logger.close()
+
     def call_llm(self, input: str | list) -> str:
-        return completion(
-            self.config.model,
-            input,
-            chat=False if self.config.use_legacy_completion else True,
-            max_tokens=self.config.max_response_length,
+        arg_dic = dict(model=self.config.model, max_tokens=self.config.max_response_length,)
+
+        if self.config.use_legacy_completion:
+            resource = self.llm_client.completions
+            arg_dic["prompt"] = input
+        else:
+            resource = self.llm_client.chat.completions
+            arg_dic["messages"] = input if isinstance(input, list) else [{"role": "user", "content": input}]
+
+        response = resource.create(
+            **arg_dic,
             **self.config.gen_parameters
         )
+        choice = response.choices[0]
+        if choice.finish_reason not in ["stop"]:
+            raise ResponseNotStoppedError(f"Response not stopped properly: {choice.finish_reason}")
+        else:
+            return choice.message.content if not self.config.use_legacy_completion else choice.text
 
     def play_a_game(self, game_id) -> Dict[str, Dict|List]:
         tries = [] # type: list[Trial]
@@ -68,7 +90,7 @@ class BullsAndCowAgent:
 
             # Get model response
             response = self.call_llm(prompt)
-            print("\n\n", prompt, response, "\n\n")
+            print("\n\n", prompt, "\n\nAssistant Response:\n\n", response, "\n\n")
             guess = None
 
             try:
@@ -106,14 +128,14 @@ if __name__ == "__main__":
 
     # create sub command: run -c <config_file> -n <num>
     run_parser = subparsers.add_parser("run", help="Run the game in a batch mode (num_games in config_file)")
-    run_parser.add_argument("-n", "--num", type=int, default=None, help="Number of games to play")
+    run_parser.add_argument("-n", "--num", type=int, default=1, help="Number of games to play")
 
     # create sub command: vllm -c <config_file>
     vllm_parser = subparsers.add_parser("vllm")
 
     # add config_file for all subcommands
     for p in [play_parser, run_parser, vllm_parser]:
-        p.add_argument("-c", "--config", type=str, required=True, help="Path to the config file")
+        p.add_argument("-c", "--config", type=str, default="config.json", help="Path to the config file")
     args = parser.parse_args()
 
     config = AgentRunConfig.from_json_file(args.config)

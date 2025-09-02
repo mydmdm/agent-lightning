@@ -67,13 +67,15 @@ class DaemonServer(AbstractContextManager):
                 if self.ready_text and self.ready_text in line:
                     self._ready_event.set()
 
+        print(f"[{self.name}] Starting (PID={self.process.pid}), command: \n>>> {' '.join(self.cmd)}")
+
         threading.Thread(target=_watch_stdout, daemon=True).start()
         if self.ready_text:
             # Wait for the ready signal
             if not self._ready_event.wait(timeout=self.timeout):
                 self.__exit__(None, None, None)  # cleanup
                 raise TimeoutError(f"[{self.name}] Did not see '{self.ready_text}' in output within {self.timeout}s")
-            print(f"[{self.name}] Ready (PID={self.process.pid}), command: \n>>> {' '.join(self.cmd)}")
+            print(f"[{self.name}] Ready (PID={self.process.pid})")
 
         return self
 

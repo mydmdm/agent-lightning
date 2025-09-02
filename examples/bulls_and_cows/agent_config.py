@@ -6,7 +6,8 @@ import time
 from urllib.parse import urlparse
 from pathlib import Path
 from typing import List, Dict, Optional, Any
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, PrivateAttr
+from dotenv import dotenv_values, load_dotenv
 
 
 class AgentRunConfig(BaseModel):
@@ -34,7 +35,8 @@ class AgentRunConfig(BaseModel):
     def setup_runtime(self):
         if self.engine != "vllm":
             raise ValueError(f"Unsupported engine: {self.engine}")
-
+        if self.dotenv_file:
+            load_dotenv(self.dotenv_file)
         return self
 
     # --- Class constructors ---
